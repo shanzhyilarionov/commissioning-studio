@@ -1021,6 +1021,46 @@ select {
   opacity: 0.6;
 }
 
+:root {
+  --workspace-top-spacing: 48px;
+  --workspace-side-spacing: 32px;
+}
+
+.app-shell {
+  position: relative;
+  height: 100vh;
+  min-height: 100vh;
+}
+
+.window-drag-region {
+  position: fixed;
+  z-index: 10000;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--workspace-top-spacing);
+  background: transparent;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.sidebar {
+  padding-top: var(--workspace-top-spacing);
+}
+
+.page-content {
+  box-sizing: border-box;
+  padding-top: var(--workspace-top-spacing);
+  padding-right: var(--workspace-side-spacing);
+  padding-bottom: 30px;
+  padding-left: var(--workspace-side-spacing);
+}
+
+.page-content > .content-card {
+  margin-top: 0;
+}
+
 @media (max-width: 920px) {
   .page-header,
   .page-content {

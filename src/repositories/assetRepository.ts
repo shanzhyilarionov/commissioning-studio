@@ -251,3 +251,17 @@ export async function updateAsset(
     updatedAt,
   };
 }
+
+export async function deleteAsset(assetId: string): Promise<void> {
+  const database = await getDatabase();
+
+  await getAssetById(assetId);
+
+  await database.execute(
+    `
+      DELETE FROM assets
+      WHERE id = $1
+    `,
+    [assetId],
+  );
+}

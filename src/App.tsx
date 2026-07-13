@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import CreateProjectModal from "./components/CreateProjectModal";
+import DeleteConfirmationModal from "./components/DeleteConfirmationModal";
 import EditProjectModal from "./components/EditProjectModal";
-import ProjectStatusActionModal, {
-  type ProjectStatusAction,
-} from "./components/ProjectStatusActionModal";
 import AssetsPage from "./pages/AssetsPage";
 import ProjectOverviewPage from "./pages/DashboardPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import {
   archiveProject,
   createProject,
+  deleteProject,
   listProjects,
   restoreProject,
   updateProject,
@@ -20,13 +20,10 @@ import type {
   Project,
   UpdateProjectInput,
 } from "./types/project";
-
 import commissioningWorkspaceLogo from "./assets/commissioning-workspace-logo.png";
-
 import "./App.css";
 
 const globalPages = ["Home", "Projects"] as const;
-
 const projectPages = [
   "Overview",
   "Assets",
@@ -35,20 +32,14 @@ const projectPages = [
   "Documents",
   "Reports",
 ] as const;
-
 const utilityPages = ["Settings"] as const;
 
 type ProjectPage = (typeof projectPages)[number];
-
 type Page =
   | (typeof globalPages)[number]
   | ProjectPage
   | (typeof utilityPages)[number];
-
-interface PendingProjectStatusAction {
-  project: Project;
-  action: ProjectStatusAction;
-}
+type ProjectStatusAction = "archive" | "restore";
 
 function isProjectPage(page: Page): page is ProjectPage {
   return projectPages.includes(page as ProjectPage);
@@ -56,36 +47,25 @@ function isProjectPage(page: Page): page is ProjectPage {
 
 function App() {
   const [activePage, setActivePage] = useState<Page>("Home");
-
   const [projects, setProjects] = useState<Project[]>([]);
-
   const [currentProjectId, setCurrentProjectId] =
     useState<string | null>(null);
-
   const [isCreateProjectOpen, setIsCreateProjectOpen] =
     useState(false);
-
   const [editingProject, setEditingProject] =
     useState<Project | null>(null);
-
-  const [
-    pendingProjectStatusAction,
-    setPendingProjectStatusAction,
-  ] = useState<PendingProjectStatusAction | null>(null);
-
-  const [
-    isChangingProjectStatus,
-    setIsChangingProjectStatus,
-  ] = useState(false);
-
-  const [
-    projectStatusActionError,
-    setProjectStatusActionError,
-  ] = useState<string | null>(null);
-
+  const [changingProjectStatusId, setChangingProjectStatusId] =
+    useState<string | null>(null);
+  const [projectStatusActionError, setProjectStatusActionError] =
+    useState<string | null>(null);
+  const [projectToDelete, setProjectToDelete] =
+    useState<Project | null>(null);
+  const [isDeletingProject, setIsDeletingProject] =
+    useState(false);
+  const [projectDeleteError, setProjectDeleteError] =
+    useState<string | null>(null);
   const [isLoadingProjects, setIsLoadingProjects] =
     useState(true);
-
   const [projectLoadError, setProjectLoadError] =
     useState<string | null>(null);
 
@@ -126,12 +106,6 @@ function App() {
       (project) => project.id === currentProjectId,
     ) ?? null;
 
-  const changingProjectStatusId =
-    isChangingProjectStatus &&
-    pendingProjectStatusAction
-      ? pendingProjectStatusAction.project.id
-      : null;
-
   async function handleCreateProject(
     input: CreateProjectInput,
   ): Promise<void> {
@@ -162,7 +136,6 @@ function App() {
           : project,
       ),
     );
-
     setEditingProject(null);
   }
 
@@ -171,36 +144,15 @@ function App() {
     setActivePage("Overview");
   }
 
-  function handleRequestProjectStatusAction(
+  async function handleProjectStatusAction(
     project: Project,
     action: ProjectStatusAction,
   ) {
-    setProjectStatusActionError(null);
-
-    setPendingProjectStatusAction({
-      project,
-      action,
-    });
-  }
-
-  function handleCloseProjectStatusAction() {
-    if (isChangingProjectStatus) {
+    if (changingProjectStatusId !== null) {
       return;
     }
 
-    setPendingProjectStatusAction(null);
-    setProjectStatusActionError(null);
-  }
-
-  async function handleConfirmProjectStatusAction() {
-    if (!pendingProjectStatusAction) {
-      return;
-    }
-
-    const { project, action } =
-      pendingProjectStatusAction;
-
-    setIsChangingProjectStatus(true);
+    setChangingProjectStatusId(project.id);
     setProjectStatusActionError(null);
 
     try {
@@ -216,8 +168,6 @@ function App() {
             : currentProject,
         ),
       );
-
-      setPendingProjectStatusAction(null);
     } catch (error) {
       setProjectStatusActionError(
         error instanceof Error
@@ -227,7 +177,61 @@ function App() {
             : "Failed to restore the project.",
       );
     } finally {
-      setIsChangingProjectStatus(false);
+      setChangingProjectStatusId(null);
+    }
+  }
+
+  function handleRequestDeleteProject(project: Project) {
+    setProjectDeleteError(null);
+    setProjectToDelete(project);
+  }
+
+  function handleCloseDeleteProject() {
+    if (isDeletingProject) {
+      return;
+    }
+
+    setProjectToDelete(null);
+    setProjectDeleteError(null);
+  }
+
+  async function handleConfirmDeleteProject() {
+    if (!projectToDelete) {
+      return;
+    }
+
+    const project = projectToDelete;
+
+    setIsDeletingProject(true);
+    setProjectDeleteError(null);
+
+    try {
+      await deleteProject(project.id);
+
+      setProjects((current) =>
+        current.filter(
+          (currentProject) => currentProject.id !== project.id,
+        ),
+      );
+
+      setEditingProject((current) =>
+        current?.id === project.id ? null : current,
+      );
+
+      if (currentProjectId === project.id) {
+        setCurrentProjectId(null);
+        setActivePage("Projects");
+      }
+
+      setProjectToDelete(null);
+    } catch (error) {
+      setProjectDeleteError(
+        error instanceof Error
+          ? error.message
+          : "Failed to delete the project.",
+      );
+    } finally {
+      setIsDeletingProject(false);
     }
   }
 
@@ -240,15 +244,22 @@ function App() {
     );
   }
 
+  function handleWindowDrag(
+    event: React.MouseEvent<HTMLDivElement>,
+  ) {
+    if (event.button !== 0) {
+      return;
+    }
+    void getCurrentWindow().startDragging();
+  }
+
   function renderPage() {
     if (isLoadingProjects) {
       return (
         <section className="content-card placeholder">
           <h3>Loading projects</h3>
-
           <p>
-            Reading commissioning projects from the local
-            database.
+            Reading commissioning projects from the local database.
           </p>
         </section>
       );
@@ -270,7 +281,6 @@ function App() {
             <div className="card-header">
               <div>
                 <h3>Workspace</h3>
-
                 <p>
                   Open an existing project or create a new
                   commissioning project.
@@ -280,9 +290,7 @@ function App() {
               <button
                 className="primary-button"
                 type="button"
-                onClick={() =>
-                  setIsCreateProjectOpen(true)
-                }
+                onClick={() => setIsCreateProjectOpen(true)}
               >
                 New project
               </button>
@@ -297,10 +305,8 @@ function App() {
 
                 <div>
                   <span>Current project</span>
-
                   <strong>
-                    {currentProject?.name ??
-                      "None selected"}
+                    {currentProject?.name ?? "None selected"}
                   </strong>
                 </div>
               </div>
@@ -313,26 +319,18 @@ function App() {
           <ProjectsPage
             projects={projects}
             currentProjectId={currentProjectId}
-            changingProjectStatusId={
-              changingProjectStatusId
-            }
-            onCreateProject={() =>
-              setIsCreateProjectOpen(true)
-            }
+            changingProjectStatusId={changingProjectStatusId}
+            actionError={projectStatusActionError}
+            onCreateProject={() => setIsCreateProjectOpen(true)}
             onSelectProject={handleOpenProject}
             onEditProject={setEditingProject}
-            onArchiveProject={(project) =>
-              handleRequestProjectStatusAction(
-                project,
-                "archive",
-              )
-            }
-            onRestoreProject={(project) =>
-              handleRequestProjectStatusAction(
-                project,
-                "restore",
-              )
-            }
+            onArchiveProject={(project) => {
+              void handleProjectStatusAction(project, "archive");
+            }}
+            onRestoreProject={(project) => {
+              void handleProjectStatusAction(project, "restore");
+            }}
+            onDeleteProject={handleRequestDeleteProject}
           />
         );
 
@@ -346,9 +344,7 @@ function App() {
         return (
           <ProjectOverviewPage
             currentProject={currentProject}
-            onCreateProject={() =>
-              setIsCreateProjectOpen(true)
-            }
+            onCreateProject={() => setIsCreateProjectOpen(true)}
           />
         );
 
@@ -359,15 +355,10 @@ function App() {
           );
         }
 
-        return (
-          <AssetsPage currentProject={currentProject} />
-        );
+        return <AssetsPage currentProject={currentProject} />;
 
       default:
-        if (
-          isProjectPage(activePage) &&
-          !currentProject
-        ) {
+        if (isProjectPage(activePage) && !currentProject) {
           return renderNoProjectSelected(
             "Open or create a project before accessing this project module.",
           );
@@ -376,10 +367,8 @@ function App() {
         return (
           <section className="content-card placeholder">
             <h3>{activePage}</h3>
-
             <p>
-              {isProjectPage(activePage) &&
-              currentProject
+              {isProjectPage(activePage) && currentProject
                 ? `${activePage} for ${currentProject.name} will be implemented in a later version.`
                 : "This module will be implemented in a later version."}
             </p>
@@ -391,8 +380,14 @@ function App() {
   return (
     <>
       <div className="app-shell">
+        <div
+          className="window-drag-region"
+          data-tauri-drag-region
+          aria-hidden="true"
+          onMouseDown={handleWindowDrag}
+        />
         <aside className="sidebar">
-          <div className="sidebar-logo">
+          <div className="sidebar-logo" data-tauri-drag-region>
             <img
               src={commissioningWorkspaceLogo}
               alt="Commissioning Workspace"
@@ -435,10 +430,7 @@ function App() {
                   }
                 >
                   {projects.map((project) => (
-                    <option
-                      key={project.id}
-                      value={project.id}
-                    >
+                    <option key={project.id} value={project.id}>
                       {project.name}
                     </option>
                   ))}
@@ -485,17 +477,13 @@ function App() {
         </aside>
 
         <main className="main-content">
-          <div className="page-content">
-            {renderPage()}
-          </div>
+          <div className="page-content">{renderPage()}</div>
         </main>
       </div>
 
       <CreateProjectModal
         isOpen={isCreateProjectOpen}
-        onClose={() =>
-          setIsCreateProjectOpen(false)
-        }
+        onClose={() => setIsCreateProjectOpen(false)}
         onCreate={handleCreateProject}
       />
 
@@ -505,18 +493,25 @@ function App() {
         onSave={handleUpdateProject}
       />
 
-      <ProjectStatusActionModal
-        project={
-          pendingProjectStatusAction?.project ?? null
+      <DeleteConfirmationModal
+        isOpen={projectToDelete !== null}
+        title="Delete project"
+        message={
+          projectToDelete ? (
+            <>
+              Delete <strong>{projectToDelete.name}</strong>? All
+              assets belonging to this project will also be
+              permanently deleted. This action cannot be undone.
+            </>
+          ) : null
         }
-        action={
-          pendingProjectStatusAction?.action ?? null
-        }
-        isSubmitting={isChangingProjectStatus}
-        error={projectStatusActionError}
-        onClose={handleCloseProjectStatusAction}
+        confirmLabel="Delete project"
+        submittingLabel="Deleting project..."
+        isSubmitting={isDeletingProject}
+        error={projectDeleteError}
+        onClose={handleCloseDeleteProject}
         onConfirm={() => {
-          void handleConfirmProjectStatusAction();
+          void handleConfirmDeleteProject();
         }}
       />
     </>

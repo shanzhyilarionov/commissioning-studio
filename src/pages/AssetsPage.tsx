@@ -5,8 +5,10 @@ import {
 } from "react";
 
 import AssetModal from "../components/AssetModal";
+import DeleteConfirmationModal from "../components/DeleteConfirmationModal";
 import {
   createAsset,
+  deleteAsset,
   listAssetsByProject,
   updateAsset,
 } from "../repositories/assetRepository";
@@ -27,13 +29,10 @@ function formatAssetStatus(status: AssetStatus) {
   switch (status) {
     case "not_started":
       return "Not started";
-
     case "in_progress":
       return "In progress";
-
     case "completed":
       return "Completed";
-
     case "blocked":
       return "Blocked";
   }
@@ -41,14 +40,13 @@ function formatAssetStatus(status: AssetStatus) {
 
 function sortAssets(assets: Asset[]) {
   return [...assets].sort((first, second) => {
-    const systemComparison =
-      first.systemName.localeCompare(
-        second.systemName,
-        undefined,
-        {
-          sensitivity: "base",
-        },
-      );
+    const systemComparison = first.systemName.localeCompare(
+      second.systemName,
+      undefined,
+      {
+        sensitivity: "base",
+      },
+    );
 
     if (systemComparison !== 0) {
       return systemComparison;
@@ -65,23 +63,24 @@ function sortAssets(assets: Asset[]) {
   });
 }
 
-function AssetsPage({
-  currentProject,
-}: AssetsPageProps) {
+function AssetsPage({ currentProject }: AssetsPageProps) {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] =
     useState<string | null>(null);
-
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<AssetStatusFilter>("all");
-
   const [isAssetModalOpen, setIsAssetModalOpen] =
     useState(false);
-
   const [editingAsset, setEditingAsset] =
     useState<Asset | null>(null);
+  const [assetToDelete, setAssetToDelete] =
+    useState<Asset | null>(null);
+  const [isDeletingAsset, setIsDeletingAsset] =
+    useState(false);
+  const [assetDeleteError, setAssetDeleteError] =
+    useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,8 +90,9 @@ function AssetsPage({
       setLoadError(null);
 
       try {
-        const storedAssets =
-          await listAssetsByProject(currentProject.id);
+        const storedAssets = await listAssetsByProject(
+          currentProject.id,
+        );
 
         if (!cancelled) {
           setAssets(storedAssets);
@@ -116,7 +116,8 @@ function AssetsPage({
     setStatusFilter("all");
     setEditingAsset(null);
     setIsAssetModalOpen(false);
-
+    setAssetToDelete(null);
+    setAssetDeleteError(null);
     void loadAssets();
 
     return () => {
@@ -125,24 +126,18 @@ function AssetsPage({
   }, [currentProject.id]);
 
   const filteredAssets = useMemo(() => {
-    const normalizedQuery =
-      searchQuery.trim().toLowerCase();
+    const normalizedQuery = searchQuery.trim().toLowerCase();
 
     return assets.filter((asset) => {
       const matchesStatus =
         statusFilter === "all" ||
         asset.status === statusFilter;
-
       const matchesSearch =
         normalizedQuery.length === 0 ||
         asset.tag.toLowerCase().includes(normalizedQuery) ||
         asset.name.toLowerCase().includes(normalizedQuery) ||
-        asset.systemName
-          .toLowerCase()
-          .includes(normalizedQuery) ||
-        asset.assetType
-          .toLowerCase()
-          .includes(normalizedQuery);
+        asset.systemName.toLowerCase().includes(normalizedQuery) ||
+        asset.assetType.toLowerCase().includes(normalizedQuery);
 
       return matchesStatus && matchesSearch;
     });
@@ -195,14 +190,60 @@ function AssetsPage({
     handleCloseAssetModal();
   }
 
+  function handleRequestDeleteAsset(asset: Asset) {
+    setAssetDeleteError(null);
+    setAssetToDelete(asset);
+  }
+
+  function handleCloseDeleteAsset() {
+    if (isDeletingAsset) {
+      return;
+    }
+
+    setAssetToDelete(null);
+    setAssetDeleteError(null);
+  }
+
+  async function handleConfirmDeleteAsset() {
+    if (!assetToDelete) {
+      return;
+    }
+
+    const asset = assetToDelete;
+
+    setIsDeletingAsset(true);
+    setAssetDeleteError(null);
+
+    try {
+      await deleteAsset(asset.id);
+
+      setAssets((current) =>
+        current.filter(
+          (currentAsset) => currentAsset.id !== asset.id,
+        ),
+      );
+
+      setEditingAsset((current) =>
+        current?.id === asset.id ? null : current,
+      );
+      setAssetToDelete(null);
+    } catch (error) {
+      setAssetDeleteError(
+        error instanceof Error
+          ? error.message
+          : "Failed to delete the asset.",
+      );
+    } finally {
+      setIsDeletingAsset(false);
+    }
+  }
+
   if (isLoading) {
     return (
       <section className="content-card placeholder">
         <h3>Loading assets</h3>
-
         <p>
-          Reading equipment records for{" "}
-          {currentProject.name}.
+          Reading equipment records for {currentProject.name}.
         </p>
       </section>
     );
@@ -212,7 +253,6 @@ function AssetsPage({
     return (
       <section className="content-card placeholder">
         <h3>Unable to load assets</h3>
-
         <p>{loadError}</p>
       </section>
     );
@@ -224,7 +264,6 @@ function AssetsPage({
         <div className="projects-header">
           <div>
             <h3>Assets</h3>
-
             <p>
               Manage equipment and commissioning status for{" "}
               {currentProject.name}.
@@ -263,15 +302,9 @@ function AssetsPage({
             }
           >
             <option value="all">All statuses</option>
-            <option value="not_started">
-              Not started
-            </option>
-            <option value="in_progress">
-              In progress
-            </option>
-            <option value="completed">
-              Completed
-            </option>
+            <option value="not_started">Not started</option>
+            <option value="in_progress">In progress</option>
+            <option value="completed">Completed</option>
             <option value="blocked">Blocked</option>
           </select>
 
@@ -283,9 +316,7 @@ function AssetsPage({
         {assets.length === 0 ? (
           <div className="empty-state">
             <div className="empty-icon">+</div>
-
             <h3>No assets yet</h3>
-
             <p>
               Add the first equipment record for this project.
             </p>
@@ -293,10 +324,7 @@ function AssetsPage({
         ) : filteredAssets.length === 0 ? (
           <div className="empty-state compact">
             <h3>No matching assets</h3>
-
-            <p>
-              Change the search text or status filter.
-            </p>
+            <p>Change the search text or status filter.</p>
           </div>
         ) : (
           <div className="projects-table-wrapper">
@@ -323,9 +351,7 @@ function AssetsPage({
                     </td>
 
                     <td>{asset.name}</td>
-
                     <td>{asset.systemName || "—"}</td>
-
                     <td>{asset.assetType || "—"}</td>
 
                     <td className="status-cell">
@@ -343,15 +369,25 @@ function AssetsPage({
                     </td>
 
                     <td className="table-action-cell">
-                      <button
-                        className="row-action-button"
-                        type="button"
-                        onClick={() =>
-                          handleEditAsset(asset)
-                        }
-                      >
-                        Edit
-                      </button>
+                      <div className="project-row-actions">
+                        <button
+                          className="row-action-button"
+                          type="button"
+                          onClick={() => handleEditAsset(asset)}
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          className="row-action-button danger"
+                          type="button"
+                          onClick={() =>
+                            handleRequestDeleteAsset(asset)
+                          }
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -367,6 +403,30 @@ function AssetsPage({
         asset={editingAsset}
         onClose={handleCloseAssetModal}
         onSave={handleSaveAsset}
+      />
+
+      <DeleteConfirmationModal
+        isOpen={assetToDelete !== null}
+        title="Delete asset"
+        message={
+          assetToDelete ? (
+            <>
+              Delete asset <strong>{assetToDelete.tag}</strong>
+              {assetToDelete.name
+                ? ` — ${assetToDelete.name}`
+                : ""}
+              ? This action cannot be undone.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete asset"
+        submittingLabel="Deleting asset..."
+        isSubmitting={isDeletingAsset}
+        error={assetDeleteError}
+        onClose={handleCloseDeleteAsset}
+        onConfirm={() => {
+          void handleConfirmDeleteAsset();
+        }}
       />
     </>
   );

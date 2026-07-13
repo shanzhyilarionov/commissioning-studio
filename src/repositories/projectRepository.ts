@@ -212,3 +212,17 @@ export async function restoreProject(
 ): Promise<Project> {
   return changeProjectStatus(projectId, "active");
 }
+
+export async function deleteProject(projectId: string): Promise<void> {
+  const database = await getDatabase();
+
+  await getProjectById(projectId);
+
+  await database.execute(
+    `
+      DELETE FROM projects
+      WHERE id = $1
+    `,
+    [projectId],
+  );
+}
